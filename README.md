@@ -24,7 +24,7 @@ cp .env.example .env   # y completa ANTHROPIC_API_KEY
 | `npm run simulador` | Simulador de chat en http://localhost:3000 (cliente y tú, lado a lado, con escenarios de prueba) |
 | `npm run traducir -- "texto" es` | Traduce un mensaje desde la terminal |
 | `npm run escenarios` | Ejecuta las conversaciones de prueba en varios idiomas |
-| `npm run dev` | Arranca el bot de Telegram (Fase 2) |
+| `npm run dev` | Arranca el bot de Telegram en tu PC (Fase 2) |
 | `npm run typecheck` | Comprueba los tipos de TypeScript |
 
 ## Estructura
@@ -33,11 +33,26 @@ cp .env.example .env   # y completa ANTHROPIC_API_KEY
 - `src/scenario-data.ts`: conversaciones de prueba
 - `src/simulator/`: simulador web (Fase 1)
 - `src/index.ts`: bot de Telegram (Fase 2)
+- `src/store.ts`: idioma de cada cliente y a qué cliente pertenece cada mensaje (`data/store.json`)
+
+## Bot de Telegram (Fase 2)
+
+Los clientes escriben al bot en su idioma. Los mensajes llegan traducidos al **chat de agentes**
+(tu chat privado con el bot o un grupo del equipo). Para contestar, usa **Responder** sobre el mensaje
+del cliente y escribe en español: al cliente le llega en su idioma.
+
+1. En Telegram, abre **@BotFather**, envía `/newbot` y copia el token en `.env` (`TELEGRAM_BOT_TOKEN`).
+2. Arranca el bot con `npm run dev`.
+3. Desde el chat de agentes (tu chat con el bot, o un grupo donde agregaste el bot), envía `/miid`.
+   Copia el número en `.env` (`AGENT_CHAT_ID`) y reinicia el bot.
+4. Desde otra cuenta de Telegram (el "cliente"), abre el bot, envía `/start` y escribe en otro idioma.
+
+Funciona con texto, fotos, audios, archivos y stickers; los pies de foto también se traducen.
 
 ## Fases
 
 1. **Simulador**: probar la calidad de la traducción sin Telegram. ✅
-2. **Bot en Telegram**: probar el flujo con un bot y una cuenta de prueba.
+2. **Bot en Telegram**: probar el flujo con un bot y una cuenta de prueba. (en pruebas)
 3. **Telegram Business**: conectar el bot a la cuenta Premium que atiende clientes.
 
 > El archivo `.env` contiene claves privadas y nunca se sube al repositorio.
