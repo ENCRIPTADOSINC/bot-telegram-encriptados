@@ -6,6 +6,8 @@ import path from "node:path";
 export interface ClientInfo {
   name: string;
   language: string;
+  /** Si el cliente escribió a la cuenta de empresa (Telegram Business), la conexión por la que se le responde */
+  businessConnectionId?: string;
 }
 
 interface Data {

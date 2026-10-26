@@ -49,6 +49,17 @@ del cliente y escribe en español: al cliente le llega en su idioma.
 
 Funciona con texto, fotos, audios, archivos y stickers; los pies de foto también se traducen.
 
+### Atender los chats de la cuenta de empresa (Telegram Business)
+
+Para que el bot traduzca los mensajes que los clientes envían a la cuenta de la empresa (por ejemplo
+@encriptados) y responda en su nombre. La cuenta necesita Telegram Premium.
+
+1. En **@BotFather**: `/mybots` → el bot → **Bot Settings** → **Business Mode** → activar.
+2. En la app de Telegram de la cuenta de empresa: **Ajustes → Telegram Business → Chatbots**,
+   escribe el usuario del bot y dale permiso para **responder mensajes**.
+3. Los mensajes de los clientes llegan traducidos al chat de agentes igual que antes; al responder,
+   el cliente recibe la traducción desde la cuenta de empresa.
+
 ## Fases
 
 1. **Simulador**: probar la calidad de la traducción sin Telegram. ✅

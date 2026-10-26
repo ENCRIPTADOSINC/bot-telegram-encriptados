@@ -1,6 +1,8 @@
-// Bot de Telegram (Fase 2): los clientes escriben al bot en su idioma, los mensajes llegan traducidos
-// al chat de agentes, y las respuestas (con "Responder" sobre el mensaje del cliente) vuelven traducidas.
+// Bot de Telegram (Fase 2): los clientes escriben en su idioma (al bot o a la cuenta de empresa conectada
+// con Telegram Business), los mensajes llegan traducidos al chat de agentes, y las respuestas (con
+// "Responder" sobre el mensaje del cliente) vuelven traducidas por la misma vía.
 import { Bot, type Context } from "grammy";
+import type { Message } from "grammy/types";
 import { config } from "./config.js";
 import { store } from "./store.js";
 import { translate } from "./translator.js";
@@ -50,20 +52,39 @@ bot.command("start", async (ctx) => {
 });
 
 // ── Cliente -> agentes ────────────────────────────────────────────────────────
-bot.on("message", async (ctx, next) => {
-  if (isAgentChat(ctx)) return next();
-  if (ctx.chat.type !== "private") return; // el bot solo atiende clientes por chat privado
-  if (config.agentChatId === undefined) {
-    await ctx.reply("El bot todavía no está configurado (falta AGENT_CHAT_ID).");
-    return;
-  }
+// Los clientes llegan por dos vías: escribiendo directo al bot, o escribiendo a la cuenta de empresa
+// conectada al bot con Telegram Business (Ajustes -> Telegram Business -> Chatbots).
 
-  const agentChat = config.agentChatId;
-  const from = ctx.message.from;
+/**
+ * Reenvía fotos, audios, archivos... por su file_id. Se usa con Telegram Business, donde copyMessage
+ * no sirve para enviar en nombre de la cuenta. Devuelve undefined si el tipo de mensaje no está soportado.
+ */
+function sendMedia(
+  api: Context["api"],
+  chatId: number,
+  msg: Message,
+  options: { caption?: string; business_connection_id?: string; reply_parameters?: { message_id: number } },
+) {
+  const { caption, ...other } = options;
+  if (msg.photo) return api.sendPhoto(chatId, msg.photo.at(-1)!.file_id, { ...other, caption });
+  if (msg.animation) return api.sendAnimation(chatId, msg.animation.file_id, { ...other, caption });
+  if (msg.video) return api.sendVideo(chatId, msg.video.file_id, { ...other, caption });
+  if (msg.document) return api.sendDocument(chatId, msg.document.file_id, { ...other, caption });
+  if (msg.audio) return api.sendAudio(chatId, msg.audio.file_id, { ...other, caption });
+  if (msg.voice) return api.sendVoice(chatId, msg.voice.file_id, { ...other, caption });
+  if (msg.video_note) return api.sendVideoNote(chatId, msg.video_note.file_id, other);
+  if (msg.sticker) return api.sendSticker(chatId, msg.sticker.file_id, other);
+  return undefined;
+}
+
+async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?: string) {
+  const agentChat = config.agentChatId!;
+  const clientChatId = msg.chat.id;
+  const from = msg.from!;
   const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
-  const original = ctx.message.text ?? ctx.message.caption;
+  const original = msg.text ?? msg.caption;
 
-  let language = store.getClient(ctx.chat.id)?.language ?? appLanguage(ctx) ?? "en";
+  let language = store.getClient(clientChatId)?.language ?? from.language_code?.split("-")[0] ?? "en";
   let body = "";
   if (original) {
     try {
@@ -73,36 +94,61 @@ bot.on("message", async (ctx, next) => {
       }
       body = escapeHtml(result.translation);
       if (result.translation !== original) {
-        body += `\n<blockquote expandable>${escapeHtml(original)}</blockquote>`;
+        body += `
+<blockquote expandable>${escapeHtml(original)}</blockquote>`;
       }
     } catch (err) {
       console.error("Error al traducir mensaje del cliente:", err);
-      body = `⚠️ No se pudo traducir. Mensaje original:\n${escapeHtml(original)}`;
+      body = `⚠️ No se pudo traducir. Mensaje original:
+${escapeHtml(original)}`;
     }
   }
-  store.setClient(ctx.chat.id, { name, language });
+  store.setClient(clientChatId, { name, language, businessConnectionId });
 
   const username = from.username ? ` @${from.username}` : "";
   const header = `👤 <b>${escapeHtml(name)}</b>${username} · ${languageName(language)}`;
-  const text = body ? `${header}\n\n${body}` : header;
+  const text = body ? `${header}
 
-  if (ctx.message.text) {
+${body}` : header;
+
+  if (msg.text) {
     const sent = await ctx.api.sendMessage(agentChat, text, { parse_mode: "HTML" });
-    store.link(ctx.chat.id, sent.message_id);
-  } else {
-    // Fotos, audios, archivos, stickers...: se copia el contenido y debajo va la traducción del pie de foto.
-    const copied = await ctx.api.copyMessage(
-      agentChat,
-      ctx.chat.id,
-      ctx.message.message_id,
-      ctx.message.caption ? { caption: "" } : {},
-    );
-    const sent = await ctx.api.sendMessage(agentChat, text, {
-      parse_mode: "HTML",
-      reply_parameters: { message_id: copied.message_id },
-    });
-    store.link(ctx.chat.id, copied.message_id, sent.message_id);
+    store.link(clientChatId, sent.message_id);
+    return;
   }
+  // Fotos, audios, archivos, stickers...: se copia el contenido y debajo va la traducción del pie de foto.
+  const copied = businessConnectionId
+    ? await sendMedia(ctx.api, agentChat, msg, {})
+    : await ctx.api.copyMessage(agentChat, clientChatId, msg.message_id, msg.caption ? { caption: "" } : {});
+  const sent = await ctx.api.sendMessage(agentChat, copied ? text : `${text}
+
+<i>(contenido no soportado)</i>`, {
+    parse_mode: "HTML",
+    ...(copied && { reply_parameters: { message_id: copied.message_id } }),
+  });
+  store.link(clientChatId, sent.message_id, ...(copied ? [copied.message_id] : []));
+}
+
+bot.on("message", async (ctx, next) => {
+  if (isAgentChat(ctx)) return next();
+  if (ctx.chat.type !== "private") return; // el bot solo atiende clientes por chat privado
+  if (config.agentChatId === undefined) {
+    await ctx.reply("El bot todavía no está configurado (falta AGENT_CHAT_ID).");
+    return;
+  }
+  await forwardToAgents(ctx, ctx.message);
+});
+
+bot.on("business_message", async (ctx) => {
+  const msg = ctx.businessMessage;
+  // En el chat de empresa también llegan los mensajes de la propia cuenta (los que escribe a mano
+  // o los que envía el bot en su nombre): solo se reenvían los del cliente.
+  if (msg.from?.id !== msg.chat.id) return;
+  if (config.agentChatId === undefined) {
+    console.log("Mensaje de empresa ignorado: falta AGENT_CHAT_ID.");
+    return;
+  }
+  await forwardToAgents(ctx, msg, ctx.businessConnectionId);
 });
 
 // ── Agentes -> cliente ────────────────────────────────────────────────────────
@@ -120,17 +166,23 @@ bot.on("message", async (ctx) => {
   const client = store.getClient(clientChatId);
   const language = client?.language ?? "en";
   const original = ctx.message.text ?? ctx.message.caption;
+  // Si el cliente escribió a la cuenta de empresa, la respuesta sale desde esa cuenta.
+  const business_connection_id = client?.businessConnectionId;
 
   try {
     const translation = original ? (await translate(original, language)).translation : undefined;
     if (ctx.message.text) {
-      await ctx.api.sendMessage(clientChatId, translation!);
+      await ctx.api.sendMessage(clientChatId, translation!, { business_connection_id });
+    } else if (business_connection_id) {
+      const sent = await sendMedia(ctx.api, clientChatId, ctx.message, { caption: translation, business_connection_id });
+      if (!sent) throw new Error("este tipo de mensaje no se puede enviar por la cuenta de empresa");
     } else {
       await ctx.api.copyMessage(clientChatId, ctx.chat.id, ctx.message.message_id, { caption: translation });
     }
     const confirmation = await ctx.reply(
       translation
-        ? `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")} en ${languageName(language)}:\n<blockquote>${escapeHtml(translation)}</blockquote>`
+        ? `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")} en ${languageName(language)}:
+<blockquote>${escapeHtml(translation)}</blockquote>`
         : `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")}`,
       { parse_mode: "HTML", reply_parameters: { message_id: ctx.message.message_id } },
     );
