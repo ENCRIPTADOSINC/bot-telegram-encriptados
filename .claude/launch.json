@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "simulador",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "simulador"],
+      "port": 3000
+    }
+  ]
+}
