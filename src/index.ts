@@ -240,7 +240,7 @@ bot.on("message", async (ctx) => {
       translation
         ? `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")} en ${languageName(language)}:\n<blockquote>${escapeHtml(translation)}</blockquote>`
         : `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")}`,
-      { parse_mode: "HTML", reply_parameters: { message_id: ctx.message.message_id } },
+      { parse_mode: "HTML", reply_parameters: { message_id: ctx.message.message_id, allow_sending_without_reply: true } },
     );
     // Responder a la confirmación también le escribe al mismo cliente.
     store.link(clientChatId, confirmation.message_id);
@@ -255,7 +255,7 @@ bot.on("message", async (ctx) => {
     console.error("Error al enviar respuesta al cliente:", err);
     await ctx.reply(`⚠️ No se pudo enviar: ${escapeHtml(err instanceof Error ? err.message : String(err))}`, {
       parse_mode: "HTML",
-      reply_parameters: { message_id: ctx.message.message_id },
+      reply_parameters: { message_id: ctx.message.message_id, allow_sending_without_reply: true },
     });
   }
 });
