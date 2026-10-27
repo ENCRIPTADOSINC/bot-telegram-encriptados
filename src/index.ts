@@ -63,7 +63,12 @@ function sendMedia(
   api: Context["api"],
   chatId: number,
   msg: Message,
-  options: { caption?: string; business_connection_id?: string; reply_parameters?: { message_id: number } },
+  options: {
+    caption?: string;
+    business_connection_id?: string;
+    message_thread_id?: number;
+    reply_parameters?: { message_id: number };
+  },
 ) {
   const { caption, ...other } = options;
   if (msg.photo) return api.sendPhoto(chatId, msg.photo.at(-1)!.file_id, { ...other, caption });
@@ -76,6 +81,27 @@ function sendMedia(
   if (msg.sticker) return api.sendSticker(chatId, msg.sticker.file_id, other);
   return undefined;
 }
+
+/** El chat de agentes es un grupo con temas: cada cliente tiene su propio tema */
+let agentChatHasTopics: boolean | undefined;
+
+/** Tema del cliente en el chat de agentes (lo crea la primera vez), o undefined si el chat no tiene temas */
+async function topicFor(api: Context["api"], clientChatId: number, name: string, language: string) {
+  const agentChat = config.agentChatId!;
+  const existing = store.getTopic(agentChat, clientChatId);
+  if (existing !== undefined) return existing;
+  agentChatHasTopics ??= (await api.getChat(agentChat)).is_forum === true;
+  if (!agentChatHasTopics) return undefined;
+  const topic = await api.createForumTopic(agentChat, `${name} · ${languageName(language)}`.slice(0, 128));
+  store.setTopic(agentChat, clientChatId, topic.message_thread_id);
+  return topic.message_thread_id;
+}
+
+/** Si el mensaje trae contenido que se puede enviar (foto, audio, archivo...) */
+const sendableMedia = (msg: Message) =>
+  Boolean(
+    msg.photo || msg.animation || msg.video || msg.document || msg.audio || msg.voice || msg.video_note || msg.sticker,
+  );
 
 async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?: string) {
   const agentChat = config.agentChatId!;
@@ -94,39 +120,50 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
       }
       body = escapeHtml(result.translation);
       if (result.translation !== original) {
-        body += `
-<blockquote expandable>${escapeHtml(original)}</blockquote>`;
+        body += `\n<blockquote expandable>${escapeHtml(original)}</blockquote>`;
       }
     } catch (err) {
       console.error("Error al traducir mensaje del cliente:", err);
-      body = `⚠️ No se pudo traducir. Mensaje original:
-${escapeHtml(original)}`;
+      body = `⚠️ No se pudo traducir. Mensaje original:\n${escapeHtml(original)}`;
     }
   }
   store.setClient(clientChatId, { name, language, businessConnectionId });
 
   const username = from.username ? ` @${from.username}` : "";
   const header = `👤 <b>${escapeHtml(name)}</b>${username} · ${languageName(language)}`;
-  const text = body ? `${header}
+  const text = body ? `${header}\n\n${body}` : header;
 
-${body}` : header;
+  const deliver = async (topic: number | undefined) => {
+    const where = topic === undefined ? {} : { message_thread_id: topic };
+    if (msg.text) {
+      const sent = await ctx.api.sendMessage(agentChat, text, { parse_mode: "HTML", ...where });
+      store.link(clientChatId, sent.message_id);
+      return;
+    }
+    // Fotos, audios, archivos, stickers...: se copia el contenido y debajo va la traducción del pie de foto.
+    const copied = businessConnectionId
+      ? await sendMedia(ctx.api, agentChat, msg, where)
+      : await ctx.api.copyMessage(agentChat, clientChatId, msg.message_id, {
+          ...where,
+          ...(msg.caption && { caption: "" }),
+        });
+    const sent = await ctx.api.sendMessage(agentChat, copied ? text : `${text}\n\n<i>(contenido no soportado)</i>`, {
+      parse_mode: "HTML",
+      ...where,
+      ...(copied && { reply_parameters: { message_id: copied.message_id } }),
+    });
+    store.link(clientChatId, sent.message_id, ...(copied ? [copied.message_id] : []));
+  };
 
-  if (msg.text) {
-    const sent = await ctx.api.sendMessage(agentChat, text, { parse_mode: "HTML" });
-    store.link(clientChatId, sent.message_id);
-    return;
+  const topic = await topicFor(ctx.api, clientChatId, name, language);
+  try {
+    await deliver(topic);
+  } catch (err) {
+    // Si un agente borró el tema del cliente, se crea uno nuevo.
+    if (topic === undefined || !String(err).includes("thread not found")) throw err;
+    store.setTopic(agentChat, clientChatId, undefined);
+    await deliver(await topicFor(ctx.api, clientChatId, name, language));
   }
-  // Fotos, audios, archivos, stickers...: se copia el contenido y debajo va la traducción del pie de foto.
-  const copied = businessConnectionId
-    ? await sendMedia(ctx.api, agentChat, msg, {})
-    : await ctx.api.copyMessage(agentChat, clientChatId, msg.message_id, msg.caption ? { caption: "" } : {});
-  const sent = await ctx.api.sendMessage(agentChat, copied ? text : `${text}
-
-<i>(contenido no soportado)</i>`, {
-    parse_mode: "HTML",
-    ...(copied && { reply_parameters: { message_id: copied.message_id } }),
-  });
-  store.link(clientChatId, sent.message_id, ...(copied ? [copied.message_id] : []));
 }
 
 bot.on("message", async (ctx, next) => {
@@ -153,8 +190,20 @@ bot.on("business_message", async (ctx) => {
 
 // ── Agentes -> cliente ────────────────────────────────────────────────────────
 bot.on("message", async (ctx) => {
-  const replyTo = ctx.message.reply_to_message;
-  const clientChatId = replyTo ? store.clientFor(replyTo.message_id) : undefined;
+  const msg = ctx.message;
+  // Avisos del sistema (tema creado, renombrado, alguien entró al grupo...) no se envían a nadie.
+  if (!msg.text && !msg.caption && !sendableMedia(msg)) return;
+  // Notas internas entre agentes: los mensajes que empiezan con // no se envían al cliente.
+  if (msg.text?.startsWith("//")) return;
+
+  // En un grupo con temas, todo lo que se escribe en el tema de un cliente le llega a ese cliente;
+  // en los demás chats, hay que usar «Responder» sobre un mensaje del cliente.
+  const clientChatId =
+    msg.is_topic_message && msg.message_thread_id !== undefined
+      ? store.clientForTopic(ctx.chat.id, msg.message_thread_id)
+      : msg.reply_to_message
+        ? store.clientFor(msg.reply_to_message.message_id)
+        : undefined;
   if (clientChatId === undefined) {
     // En un grupo los agentes pueden hablar entre ellos; solo se avisa en chat privado.
     if (ctx.chat.type === "private") {
@@ -181,8 +230,7 @@ bot.on("message", async (ctx) => {
     }
     const confirmation = await ctx.reply(
       translation
-        ? `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")} en ${languageName(language)}:
-<blockquote>${escapeHtml(translation)}</blockquote>`
+        ? `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")} en ${languageName(language)}:\n<blockquote>${escapeHtml(translation)}</blockquote>`
         : `✅ Enviado a ${escapeHtml(client?.name ?? "cliente")}`,
       { parse_mode: "HTML", reply_parameters: { message_id: ctx.message.message_id } },
     );

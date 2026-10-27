@@ -60,6 +60,13 @@ Para que el bot traduzca los mensajes que los clientes envían a la cuenta de la
 3. Los mensajes de los clientes llegan traducidos al chat de agentes igual que antes; al responder,
    el cliente recibe la traducción desde la cuenta de empresa.
 
+### Un tema por cliente (grupo con Temas)
+
+Si el chat de agentes es un grupo con **Temas** activados, el bot crea un tema por cliente y todo lo
+que se escribe en ese tema le llega a ese cliente (no hace falta «Responder»). Los mensajes que
+empiezan con `//` son notas internas y no se envían. El bot debe ser administrador del grupo con
+permiso para **gestionar temas**.
+
 ## Fases
 
 1. **Simulador**: probar la calidad de la traducción sin Telegram. ✅

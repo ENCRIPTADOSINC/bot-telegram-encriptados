@@ -14,15 +14,17 @@ interface Data {
   clients: Record<string, ClientInfo>;
   /** id de mensaje en el chat de agentes -> id del chat del cliente */
   threads: Record<string, number>;
+  /** "<chat de agentes>:<chat del cliente>" -> id del tema del cliente en un grupo con temas */
+  topics: Record<string, number>;
 }
 
 const FILE = path.resolve("data", "store.json");
 
 function load(): Data {
   try {
-    return JSON.parse(fs.readFileSync(FILE, "utf8")) as Data;
+    return { clients: {}, threads: {}, topics: {}, ...JSON.parse(fs.readFileSync(FILE, "utf8")) };
   } catch {
-    return { clients: {}, threads: {} };
+    return { clients: {}, threads: {}, topics: {} };
   }
 }
 
@@ -48,5 +50,19 @@ export const store = {
   },
   clientFor(agentMessageId: number): number | undefined {
     return data.threads[agentMessageId];
+  },
+  getTopic(agentChatId: number, clientChatId: number): number | undefined {
+    return data.topics[`${agentChatId}:${clientChatId}`];
+  },
+  setTopic(agentChatId: number, clientChatId: number, topicId: number | undefined) {
+    if (topicId === undefined) delete data.topics[`${agentChatId}:${clientChatId}`];
+    else data.topics[`${agentChatId}:${clientChatId}`] = topicId;
+    save();
+  },
+  clientForTopic(agentChatId: number, topicId: number): number | undefined {
+    const key = Object.keys(data.topics).find(
+      (k) => k.startsWith(`${agentChatId}:`) && data.topics[k] === topicId,
+    );
+    return key === undefined ? undefined : Number(key.split(":")[1]);
   },
 };
