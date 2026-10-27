@@ -68,6 +68,10 @@ que se escribe en ese tema le llega a ese cliente (no hace falta «Responder»).
 empiezan con `//` son notas internas y no se envían. El bot debe ser administrador del grupo con
 permiso para **gestionar temas**.
 
+El idioma del cliente solo cambia cuando la detección es segura (frases como «Buenas tardes» valen en
+español y en portugués). Si aun así se equivoca, escribe `/idioma es` (o `pt`, `en`...) dentro del tema
+para fijarlo; `/idioma auto` vuelve a la detección automática.
+
 ## Fases
 
 1. **Simulador**: probar la calidad de la traducción sin Telegram. ✅
