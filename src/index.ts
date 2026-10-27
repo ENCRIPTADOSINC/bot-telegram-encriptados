@@ -51,6 +51,20 @@ bot.command("start", async (ctx) => {
   await ctx.reply(text);
 });
 
+const plain = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+
+// Idiomas que se pueden escribir por su nombre en /idioma ("inglés", "portugues"...).
+const knownLanguages = "es en pt fr it de nl ru uk pl ro tr ar he fa hi bn ur zh ja ko vi th id ms tl sv no da fi el cs hu bg sr hr sq"
+  .split(" ");
+
+/** "auto", un código ISO ("en") o el nombre del idioma ("inglés") -> código; undefined si no se reconoce */
+function languageCode(input: string): string | undefined {
+  const text = plain(input);
+  if (text === "auto" || text === "automatico") return "auto";
+  if (/^[a-z]{2,3}$/.test(text) && languageName(text) !== text) return text;
+  return knownLanguages.find((code) => plain(languageName(code)) === text);
+}
+
 // Fija el idioma de un cliente desde su tema (o respondiendo a un mensaje suyo): "/idioma es".
 // "/idioma auto" vuelve a detectarlo con cada mensaje.
 bot.command("idioma", async (ctx) => {
@@ -67,14 +81,14 @@ bot.command("idioma", async (ctx) => {
     await ctx.reply("Usa /idioma dentro del tema del cliente (o respondiendo a un mensaje suyo).");
     return;
   }
-  const code = ctx.match.trim().toLowerCase();
+  const code = languageCode(ctx.match);
   if (code === "auto") {
     store.setClient(clientChatId, { ...client, languageLocked: false });
     await ctx.reply(`El idioma de ${escapeHtml(client.name)} se volverá a detectar con cada mensaje.`, { parse_mode: "HTML" });
     return;
   }
-  if (!/^[a-z]{2,3}$/.test(code) || languageName(code) === code) {
-    await ctx.reply("Escribe el código del idioma, por ejemplo: /idioma es, /idioma pt, /idioma en (o /idioma auto).");
+  if (code === undefined) {
+    await ctx.reply("Escribe el idioma, por ejemplo: /idioma español, /idioma inglés, /idioma pt (o /idioma auto).");
     return;
   }
   store.setClient(clientChatId, { ...client, language: code, languageLocked: true });

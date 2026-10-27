@@ -69,7 +69,7 @@ empiezan con `//` son notas internas y no se envían. El bot debe ser administra
 permiso para **gestionar temas**.
 
 El idioma del cliente solo cambia cuando la detección es segura (frases como «Buenas tardes» valen en
-español y en portugués). Si aun así se equivoca, escribe `/idioma es` (o `pt`, `en`...) dentro del tema
+español y en portugués). Si aun así se equivoca, escribe `/idioma español` (o `inglés`, `pt`, `en`...) dentro del tema
 para fijarlo; `/idioma auto` vuelve a la detección automática.
 
 ## Fases
