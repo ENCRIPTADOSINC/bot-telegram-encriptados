@@ -51,6 +51,44 @@ bot.command("start", async (ctx) => {
   await ctx.reply(text);
 });
 
+// Fija el idioma de un cliente desde su tema (o respondiendo a un mensaje suyo): "/idioma es".
+// "/idioma auto" vuelve a detectarlo con cada mensaje.
+bot.command("idioma", async (ctx) => {
+  if (!isAgentChat(ctx)) return;
+  const msg = ctx.message!;
+  const clientChatId =
+    msg.is_topic_message && msg.message_thread_id !== undefined
+      ? store.clientForTopic(ctx.chat.id, msg.message_thread_id)
+      : msg.reply_to_message
+        ? store.clientFor(msg.reply_to_message.message_id)
+        : undefined;
+  const client = clientChatId === undefined ? undefined : store.getClient(clientChatId);
+  if (clientChatId === undefined || !client) {
+    await ctx.reply("Usa /idioma dentro del tema del cliente (o respondiendo a un mensaje suyo).");
+    return;
+  }
+  const code = ctx.match.trim().toLowerCase();
+  if (code === "auto") {
+    store.setClient(clientChatId, { ...client, languageLocked: false });
+    await ctx.reply(`El idioma de ${escapeHtml(client.name)} se volverá a detectar con cada mensaje.`, { parse_mode: "HTML" });
+    return;
+  }
+  if (!/^[a-z]{2,3}$/.test(code) || languageName(code) === code) {
+    await ctx.reply("Escribe el código del idioma, por ejemplo: /idioma es, /idioma pt, /idioma en (o /idioma auto).");
+    return;
+  }
+  store.setClient(clientChatId, { ...client, language: code, languageLocked: true });
+  const topic = store.getTopic(ctx.chat.id, clientChatId);
+  if (topic !== undefined) {
+    await ctx.api
+      .editForumTopic(ctx.chat.id, topic, { name: topicName(client.name, code) })
+      .catch((err) => console.error("No se pudo renombrar el tema:", err));
+  }
+  await ctx.reply(`🔒 ${escapeHtml(client.name)} queda en ${languageName(code)}. Para volver a detectarlo: /idioma auto`, {
+    parse_mode: "HTML",
+  });
+});
+
 // ── Cliente -> agentes ────────────────────────────────────────────────────────
 // Los clientes llegan por dos vías: escribiendo directo al bot, o escribiendo a la cuenta de empresa
 // conectada al bot con Telegram Business (Ajustes -> Telegram Business -> Chatbots).
@@ -112,14 +150,17 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
   const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
   const original = msg.text ?? msg.caption;
 
-  const previousLanguage = store.getClient(clientChatId)?.language;
+  const previous = store.getClient(clientChatId);
+  const previousLanguage = previous?.language;
   let language = previousLanguage ?? from.language_code?.split("-")[0] ?? "en";
   let body = "";
   if (original) {
     try {
       const result = await translate(original, config.ownerLanguage, previousLanguage);
-      // El idioma del cliente es el del último mensaje, también si escribe en español.
-      if (result.sourceLanguage) language = result.sourceLanguage;
+      // El idioma del cliente es el del último mensaje (también si escribe en español), pero solo cambia
+      // con una detección segura: "Buenas tardes" o "Todo bien?" valen en español y en portugués.
+      const canChange = !previous?.languageLocked && (result.confident || previousLanguage === undefined);
+      if (result.sourceLanguage && canChange) language = result.sourceLanguage;
       body = escapeHtml(result.translation);
       if (result.translation !== original) {
         body += `\n<blockquote expandable>${escapeHtml(original)}</blockquote>`;
@@ -132,6 +173,7 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
   store.setClient(clientChatId, {
     name,
     language,
+    languageLocked: previous?.languageLocked,
     businessConnectionId,
     lastMessageId: msg.message_id,
     lastMessageAt: msg.date,

@@ -6,6 +6,8 @@ import path from "node:path";
 export interface ClientInfo {
   name: string;
   language: string;
+  /** Idioma fijado por un agente con /idioma: no cambia aunque el cliente escriba en otro */
+  languageLocked?: boolean;
   /** Si el cliente escribió a la cuenta de empresa (Telegram Business), la conexión por la que se le responde */
   businessConnectionId?: string;
   /** Último mensaje del cliente en la cuenta de empresa, para marcarlo como leído al responder */
