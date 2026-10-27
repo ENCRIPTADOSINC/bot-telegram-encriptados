@@ -129,7 +129,13 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
       body = `⚠️ No se pudo traducir. Mensaje original:\n${escapeHtml(original)}`;
     }
   }
-  store.setClient(clientChatId, { name, language, businessConnectionId, lastMessageId: msg.message_id });
+  store.setClient(clientChatId, {
+    name,
+    language,
+    businessConnectionId,
+    lastMessageId: msg.message_id,
+    lastMessageAt: msg.date,
+  });
 
   const username = from.username ? ` @${from.username}` : "";
   const header = `👤 <b>${escapeHtml(name)}</b>${username} · ${languageName(language)}`;
@@ -226,8 +232,9 @@ bot.on("message", async (ctx) => {
   // Si el cliente escribió a la cuenta de empresa, la respuesta sale desde esa cuenta.
   const business_connection_id = client?.businessConnectionId;
 
+  let translation: string | undefined;
   try {
-    const translation = original ? (await translate(original, language)).translation : undefined;
+    translation = original ? (await translate(original, language)).translation : undefined;
     if (ctx.message.text) {
       await ctx.api.sendMessage(clientChatId, translation!, { business_connection_id });
     } else if (business_connection_id) {
@@ -253,7 +260,19 @@ bot.on("message", async (ctx) => {
     }
   } catch (err) {
     console.error("Error al enviar respuesta al cliente:", err);
-    await ctx.reply(`⚠️ No se pudo enviar: ${escapeHtml(err instanceof Error ? err.message : String(err))}`, {
+    const reason = escapeHtml(err instanceof Error ? err.message : String(err));
+    // Telegram solo deja al bot responder por la cuenta de empresa en chats con actividad en las
+    // últimas 24 h: el agente recibe la traducción lista para enviarla a mano.
+    const stale = client?.lastMessageAt !== undefined && Date.now() / 1000 - client.lastMessageAt > 24 * 60 * 60;
+    const text =
+      business_connection_id && translation
+        ? (stale
+            ? "⚠️ Este cliente lleva más de 24 h sin escribir y el bot no puede responderle."
+            : `⚠️ No se pudo enviar (${reason}).`) +
+          ` Copia esto y envíalo a mano desde la cuenta de empresa:
+<pre>${escapeHtml(translation)}</pre>`
+        : `⚠️ No se pudo enviar: ${reason}`;
+    await ctx.reply(text, {
       parse_mode: "HTML",
       reply_parameters: { message_id: ctx.message.message_id, allow_sending_without_reply: true },
     });

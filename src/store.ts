@@ -10,6 +10,8 @@ export interface ClientInfo {
   businessConnectionId?: string;
   /** Último mensaje del cliente en la cuenta de empresa, para marcarlo como leído al responder */
   lastMessageId?: number;
+  /** Fecha (unix, segundos) del último mensaje del cliente */
+  lastMessageAt?: number;
 }
 
 interface Data {
