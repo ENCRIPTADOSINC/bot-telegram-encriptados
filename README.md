@@ -56,7 +56,8 @@ Para que el bot traduzca los mensajes que los clientes envían a la cuenta de la
 
 1. En **@BotFather**: `/mybots` → el bot → **Bot Settings** → **Business Mode** → activar.
 2. En la app de Telegram de la cuenta de empresa: **Ajustes → Telegram Business → Chatbots**,
-   escribe el usuario del bot y dale permiso para **responder mensajes**.
+   escribe el usuario del bot y dale permiso para **responder mensajes** y **marcar mensajes como leídos**
+   (así, al contestar desde el chat de agentes, el chat del cliente queda leído en la cuenta de empresa).
 3. Los mensajes de los clientes llegan traducidos al chat de agentes igual que antes; al responder,
    el cliente recibe la traducción desde la cuenta de empresa.
 

@@ -82,6 +82,8 @@ function sendMedia(
   return undefined;
 }
 
+const topicName = (name: string, language: string) => `${name} · ${languageName(language)}`.slice(0, 128);
+
 /** El chat de agentes es un grupo con temas: cada cliente tiene su propio tema */
 let agentChatHasTopics: boolean | undefined;
 
@@ -92,7 +94,7 @@ async function topicFor(api: Context["api"], clientChatId: number, name: string,
   if (existing !== undefined) return existing;
   agentChatHasTopics ??= (await api.getChat(agentChat)).is_forum === true;
   if (!agentChatHasTopics) return undefined;
-  const topic = await api.createForumTopic(agentChat, `${name} · ${languageName(language)}`.slice(0, 128));
+  const topic = await api.createForumTopic(agentChat, topicName(name, language));
   store.setTopic(agentChat, clientChatId, topic.message_thread_id);
   return topic.message_thread_id;
 }
@@ -110,14 +112,14 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
   const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
   const original = msg.text ?? msg.caption;
 
-  let language = store.getClient(clientChatId)?.language ?? from.language_code?.split("-")[0] ?? "en";
+  const previousLanguage = store.getClient(clientChatId)?.language;
+  let language = previousLanguage ?? from.language_code?.split("-")[0] ?? "en";
   let body = "";
   if (original) {
     try {
-      const result = await translate(original, config.ownerLanguage);
-      if (result.sourceLanguage && result.sourceLanguage !== config.ownerLanguage) {
-        language = result.sourceLanguage;
-      }
+      const result = await translate(original, config.ownerLanguage, previousLanguage);
+      // El idioma del cliente es el del último mensaje, también si escribe en español.
+      if (result.sourceLanguage) language = result.sourceLanguage;
       body = escapeHtml(result.translation);
       if (result.translation !== original) {
         body += `\n<blockquote expandable>${escapeHtml(original)}</blockquote>`;
@@ -127,7 +129,7 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
       body = `⚠️ No se pudo traducir. Mensaje original:\n${escapeHtml(original)}`;
     }
   }
-  store.setClient(clientChatId, { name, language, businessConnectionId });
+  store.setClient(clientChatId, { name, language, businessConnectionId, lastMessageId: msg.message_id });
 
   const username = from.username ? ` @${from.username}` : "";
   const header = `👤 <b>${escapeHtml(name)}</b>${username} · ${languageName(language)}`;
@@ -156,6 +158,12 @@ async function forwardToAgents(ctx: Context, msg: Message, businessConnectionId?
   };
 
   const topic = await topicFor(ctx.api, clientChatId, name, language);
+  if (topic !== undefined && previousLanguage !== undefined && previousLanguage !== language) {
+    // El nombre del tema muestra el idioma actual del cliente.
+    await ctx.api
+      .editForumTopic(agentChat, topic, { name: topicName(name, language) })
+      .catch((err) => console.error("No se pudo renombrar el tema:", err));
+  }
   try {
     await deliver(topic);
   } catch (err) {
@@ -236,6 +244,13 @@ bot.on("message", async (ctx) => {
     );
     // Responder a la confirmación también le escribe al mismo cliente.
     store.link(clientChatId, confirmation.message_id);
+    // Al contestar, el chat del cliente queda como leído en la cuenta de empresa (requiere el permiso
+    // «Marcar mensajes como leídos» del chatbot en Telegram Business).
+    if (business_connection_id && client?.lastMessageId !== undefined) {
+      await ctx.api
+        .readBusinessMessage(business_connection_id, clientChatId, client.lastMessageId)
+        .catch((err) => console.error("No se pudo marcar como leído:", err));
+    }
   } catch (err) {
     console.error("Error al enviar respuesta al cliente:", err);
     await ctx.reply(`⚠️ No se pudo enviar: ${escapeHtml(err instanceof Error ? err.message : String(err))}`, {
